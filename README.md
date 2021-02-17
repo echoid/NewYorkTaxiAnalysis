@@ -1,5 +1,5 @@
 # MAST30034-Assignment2
 
 
-Individual Work
+Individual Work\n
 Grade: 19/20
