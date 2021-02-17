@@ -1,0 +1,472 @@
+---
+title: "Assignment2 4 Stage2 Statistical Model"
+author: "Youran Zhou"
+date: "2020/10/4"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo =TRUE ,warning=FALSE)
+knitr::opts_knit$set(root.dir = "E:/Uni/MAST30034/MAST30034-Assignment2")
+```
+
+
+
+# 0.Prepare
+```{r}
+library(scales)
+library(dataPreparation)
+library(fitdistrplus)
+library(speedglm)
+library("performance")
+library(cvms)
+library(broom)    # tidy()
+library(tibble)
+library(faraway)
+
+```
+
+#  Load Data
+
+```{r}
+
+data <- read.csv(file = '2018_sample.csv')
+
+head(data)
+```
+
+
+# Aspect1: Analysis and predict the tip amount and discover the relationship between the tips and customer, date and so on.
+
+## Model 1 Binomial(Logistic) Regression- Classification
+### predict if the customer will tip or not.
+
+## 1 Data Prepare
+### 1.1 Find category Data features
+
+```{r}
+
+data$Type <- factor(data$Type)
+
+data$Weather.Type <- factor(data$Weather.Type)
+
+
+#data$Time_h<- factor(data$Time_h)
+
+
+binomial_col = c("passenger_count","trip_distance","fare_amount","total_amount","Druation","Time_h","Type","AWND","PRCP","SNOW","SNWD","TAVG","Weather.Type","Tip")
+
+```
+
+
+
+## 1.2 Split training and test set 
+
+
+```{r}
+
+
+train_index <- sample(1:nrow(data), 0.8 * nrow(data))
+test_index <- setdiff(1:nrow(data), train_index)
+
+train <- data[train_index,binomial_col]
+
+test <- data[test_index,binomial_col]
+
+x_contcol = c("trip_distance","fare_amount","total_amount","Druation","AWND","PRCP","SNOW","SNWD","TAVG")
+
+
+```
+
+## 1.2 Scale 
+
+```{r}
+
+scales <- build_scales(dataSet = train, cols = x_contcol, verbose = TRUE)
+train <- fastScale(dataSet = train, scales = scales, verbose = TRUE)
+test <- fastScale(dataSet = test, scales = scales, verbose = TRUE)
+
+
+```
+
+
+
+## 1.3 Training Model
+```{r}
+
+binreg_model = glm(Tip~passenger_count+trip_distance+fare_amount+Druation+Time_h+Type+AWND+PRCP+SNOW+SNWD+TAVG+Weather.Type,family = binomial,data = train)
+
+summary(binreg_model)
+
+
+```
+### 1.3 Feature Selection Via AIC
+```{r}
+
+binreg_model2 = step(binreg_model,trace=0)
+summary(binreg_model2)
+
+
+```
+
+### 1.4 LR test using deviance-Model adequacy
+```{r}
+binreg_model0 <- glm(Tip~1,family = binomial,data = train)
+pchisq(deviance(binreg_model0) - deviance(binreg_model2), 1, lower.tail=FALSE)
+
+
+
+anova(binreg_model0, binreg_model2, test="Chi")
+
+```
+
+
+
+### 1.5 Trainingset accuracy
+
+```{r}
+
+
+predict_result = round(predict(binreg_model2, newdata=train, type="response")-0.40)
+
+accuracy = (1- (sum(abs(predict_result - train$Tip))/nrow(train)))*100
+
+predict_result = round(predict(binreg_model2, newdata=test, type="response")-0.40)
+
+accuracy = (1- (sum(abs(predict_result - test$Tip))/nrow(test)))*100
+
+
+```
+
+
+```{r}
+
+
+accuracy
+
+accuracy
+
+```
+
+
+### 1.6 Confusion Matrix
+```{r}
+table = matrix(c(nrow(test)-sum(predict_result),sum(predict_result),nrow(test)-sum(test$Tip),sum(test$Tip)),ncol = 2)
+
+colnames(table) = c("0","1")
+rownames(table) = c("0","1")
+table = as.table(table)
+
+fourfoldplot(table, color = c("#CC6666", "#99CC99"),
+             conf.level = 0, margin = 1, main = "Confusion Matrix")
+```
+```{r}
+d_binomial <- tibble("target" = test$Tip,
+                     "prediction" = predict_result)
+basic_table <- table(d_binomial)
+cfm <- tidy(basic_table)
+plot_confusion_matrix(cfm, 
+                      targets_col = "target", 
+                      predictions_col = "prediction",
+                      counts_col = "n")
+
+```
+
+
+## Model 2 Gamma vs Lienar Regression
+### predict the tip amount
+
+### 2.1 Find category Data features and split training and test set
+
+```{r}
+
+without_zero = data[data$tip_amount > 0,]
+
+col = c("passenger_count","trip_distance","fare_amount","total_amount","Druation","Time_h","Type","AWND","PRCP","SNOW","SNWD","TAVG","Weather.Type","tip_amount")
+
+
+without_zero_train_index <- sample(1:nrow(without_zero), 0.8 * nrow(without_zero))
+without_zero_test_index <- setdiff(1:nrow(without_zero), train_index)
+
+
+without_zero_train <- without_zero[without_zero_train_index,col]
+
+without_zero_test <- without_zero[without_zero_test_index,col]
+
+
+```
+
+
+### 2.2 Visulization 
+#### we found this is not like a normal distribution, thus we find the most like distribution
+
+```{r}
+
+
+hist(without_zero$tip_amount)
+
+```
+### 2.3 Model Selection 
+```{r}
+check_distribution = function(data,distlist){
+  
+  count = 0
+  
+  result = list()
+  
+  for (i in distlist){
+    
+    
+    fity = fitdist(data,i)
+    
+    result = c(result, gofstat(fity)$aic)
+    
+    count = count + 1
+    
+  }
+  
+  
+  return(distlist[which.min(result)])
+  
+}
+
+distlist = c("norm","gamma","lnorm","weibull")
+
+best_dist = check_distribution (without_zero_train$tip_amount,distlist)
+
+fity = fitdist(without_zero_train$tip_amount,best_dist)
+gofstat(fity)
+plot(fity)
+
+
+```
+
+
+
+
+
+
+### 2.4 Scaling
+
+```{r}
+
+scales <- build_scales(dataSet = without_zero_train, cols = x_contcol, verbose = TRUE)
+Train <- fastScale(dataSet = without_zero_train, scales = scales, verbose = TRUE)
+Test <- fastScale(dataSet = without_zero_test, scales = scales, verbose = TRUE)
+
+
+```
+
+### 2.5 Gamma Fit and selection
+```{r}
+
+model = glm (tip_amount ~., data = without_zero_train,family = Gamma(link = "log"))
+model1 = step(model,scope = ~.)
+summary(model1)
+
+
+```
+
+
+### 2.6 Linear Regerssion Fit
+
+```{r}
+
+modellm = lm (tip_amount ~., data = without_zero_train)
+modellm1 = step(modellm,scope = ~.)
+summary(modellm1)
+
+```
+
+
+### 2.7 Evaluation  Gamma regression
+
+```{r}
+r2(model1)
+
+trainPred <- predict(model1, without_zero_train)
+training <- data.frame(cbind(actuals=without_zero_train$tip_amount , predicteds=exp(trainPred),(without_zero_train$tip_amount-exp(trainPred))^2))
+
+mse <- sqrt(mean(training[,3]))
+mse
+
+
+distPred <- predict(model1, without_zero_test)
+actuals_preds <- data.frame(cbind(actuals=without_zero_test$tip_amount , predicteds=exp(distPred),(without_zero_test$tip_amount-exp(distPred))^2))
+
+mse <- sqrt(mean(actuals_preds[,3]))
+mse
+``` 
+
+### 2.8 Evaluation  linear regression
+```{r}
+
+r2(modellm1)
+
+trainPred <- predict(modellm1, without_zero_train)
+training <- data.frame(cbind(actuals=without_zero_train$tip_amount , predicteds=(trainPred),(without_zero_train$tip_amount-(trainPred))^2))
+
+mse <- sqrt(mean(training[,3]))
+mse
+
+
+
+distPred <- predict(modellm1, without_zero_test)
+actuals_preds <- data.frame(cbind(actuals=without_zero_test$tip_amount , predicteds=distPred,(without_zero_test$tip_amount-distPred)^2))
+
+
+mse <- sqrt(mean(actuals_preds[,3]))
+mse
+
+
+```
+
+
+# Aspect2: Analysis and predict the demand of taxi in each day based on the weather condition.
+
+## Model 3 Possion Regression
+### predict the demand (number of trips) based on the weather condition.
+
+
+### 3.1 load Data and set category data
+
+```{r}
+
+weather <- read.csv(file = 'weather_freq.csv')
+
+head(weather)
+
+weather$Weather.Type =  factor(weather$Weather.Type)
+
+```
+
+### 3.1 Split training and test set
+
+```{r}
+
+ptrain_index <- sample(1:nrow(weather), 0.8 * nrow(weather))
+ptest_index <- setdiff(1:nrow(weather), train_index)
+
+ptrain <- weather[ptrain_index,]
+
+ptest <- weather[ptest_index,]
+
+
+```
+
+
+### 3.2 Training and selection
+```{r}
+
+
+pmodel <- glm(Freq ~ AWND+PRCP+SNOW+SNWD+TAVG+Weather.Type,data = ptrain, family=poisson)
+pmodel1 <- step(pmodel, trace=0)
+summary(pmodel1)
+
+```
+
+
+
+### 3.3 The residual deviance and overdispersion
+```{r}
+
+(pchisq(pmodel1$deviance, pmodel1$df.residual, lower.tail=FALSE))
+
+(phihat <- sum(residuals(pmodel1, type="pearson")^2)/pmodel1$df.residual)
+
+
+# Not Good
+
+```
+
+
+### 3.4 Redo the fit with quasi/Nagetive Binomial
+```{r}
+
+pmodelq <- glm(Freq ~ AWND+PRCP+SNOW+SNWD+TAVG+Weather.Type,data = ptrain, family=quasipoisson)
+
+
+
+(pchisq(pmodelq$deviance, pmodelq$df.residual, lower.tail=FALSE))
+(phihat <- sum(residuals(pmodelq, type="pearson")^2)/pmodelq$df.residual)
+
+
+pmodelq <- glm.nb(Freq ~ AWND+PRCP+SNOW+SNWD+TAVG+Weather.Type,data = ptrain)
+
+(pchisq(pmodelq$deviance, pmodelq$df.residual, lower.tail=FALSE))
+(phihat <- sum(residuals(pmodelq, type="pearson")^2)/pmodelq$df.residual)
+
+```
+
+## 3.5 diagnostics
+```{r}
+
+D_res <- residuals(pmodelq)
+P_res <- residuals(pmodelq, type="pearson")
+lever <- influence(pmodelq)$hat
+J_res <- rstudent(pmodelq)
+Cooks <- cooks.distance(pmodelq)
+eta_hat <- predict(pmodelq, type="link")
+par(mfrow=c(4,2))
+par(mar=c(4,4,1,2))
+plot(eta_hat, D_res, ylab="dev res")
+lines(predict(loess(D_res ~ eta_hat)), col="red")
+halfnorm(D_res, ylab="dev res")
+plot(eta_hat, P_res, ylab="pearson res")
+lines(predict(loess(P_res ~ eta_hat)), col="red")
+halfnorm(P_res, ylab="pearson res")
+halfnorm(lever, ylab="leverage")
+halfnorm(J_res, ylab="jackknife res")
+halfnorm(Cooks, ylab="Cooks dist")
+
+
+```
+
+
+
+
+
+# 3.6 Evaluate
+```{r}
+
+
+trainPred <- exp(predict(pmodelq, ptrain))
+training <- data.frame(cbind(actuals=ptrain$Freq , predicteds=(trainPred),(actuals=ptrain$Freq-(trainPred))^2))
+
+mse <- sqrt(mean(training[,3]))
+mse
+
+
+
+
+trainPred <- exp(predict(pmodelq, ptest))
+test <- data.frame(cbind(actuals=ptest$Freq , predicteds=(trainPred),(actuals=ptest$Freq-(trainPred))^2))
+
+mse <- sqrt(mean(test[,3]))
+mse
+
+
+```
+
+
+## 3.7 Plot
+
+```{r}
+
+plot(weather$X,weather$Freq)
+points(weather$X,exp(predict(pmodelq, weather)),col="red")
+
+legend("bottomleft", 
+  legend = c("Actual", "Predict"), 
+    col = c("black", "red"), 
+    pch = c(1,1), 
+    bty = "n", 
+    pt.cex = 1, 
+    cex = 1, 
+    text.col = "black", 
+    horiz = F , 
+    inset = c(0.1, 0.1))
+
+
+```
