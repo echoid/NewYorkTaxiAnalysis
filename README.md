@@ -1,5 +1,8 @@
 # MAST30034-Assignment2
 
+Grade: 19/20 :grinning:\
+OMG, Markdown is killing me
+
 Sometimes you want numbered lists:
 
 1. One
